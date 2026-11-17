@@ -1,60 +1,153 @@
-using { /Fortnite.com/Devices }
 using { /Verse.org/Simulation }
-using { /UnrealEngine.com/Temporary/UI }
-using { /Verse.org/Colors }
-using { /Fortnite.com/UI }
-using { /UnrealEngine.com/Temporary/SpatialMath }
+using { /Fortnite.com/Devices }
+using { /UnrealEngine.com/Temporary/Diagnostics }
 
-map_version_display_device := class(creative_device):
+# ==============================================================
+var PlayerStats : weak_map(player, player_stats_table) = map{}
+
+# ==============================================================
+player_stats_table := class<final><persistable>:
+    Score      : int   = 0
+    Wins       : float = 0.0
+    Losses     : float = 0.0
+    Assists    : float = 0.0
+    Deaths     : float = 0.0
+    TimePlayed : float = 0.0
+
+MakePlayerStatsTable<constructor>(
+    OldStats : player_stats_table,
+    ?InScore      : int   = OldStats.Score,
+    ?InWins       : float = OldStats.Wins,
+    ?InLosses     : float = OldStats.Losses,
+    ?InAssists    : float = OldStats.Assists,
+    ?InDeaths     : float = OldStats.Deaths,
+    ?InTimePlayed : float = OldStats.TimePlayed
+) := player_stats_table:
+    Score      := InScore
+    Wins       := InWins
+    Losses     := InLosses
+    Assists    := InAssists
+    Deaths     := InDeaths
+    TimePlayed := InTimePlayed
+
+# ==============================================================
+GetKDA(Stats : player_stats_table) : float =
+    Divisor := if (Stats.Deaths > 0.0) then Stats.Deaths else 1.0
+    (Stats.Wins + Stats.Assists) / Divisor
+
+GetWinRate(Stats : player_stats_table) : float =
+    Total := Stats.Wins + Stats.Losses
+    if (Total > 0.0):
+        (Stats.Wins / Total) * 100.0
+    else:
+        0.0
+
+# ==============================================================
+player_stats_manager := class(creative_device):
+
+    # 1. LIAISON DU PANNEAU D'AFFICHAGE
     @editable
-    VersionString : string = "V2.74"
+    PanneauStats : billboard_device = billboard_device{}
 
-    @editable
-    FontSize : float = 17.0
+    # 2. DEFINITION DU TEXTE
+    TexteClassement<localizes>(Kills: int, Deaths: int, KD: float, TimePlayed: int) : message = "Classement\nCaillou_Matcol\n\nKills {Kills}\nDeaths {Deaths}\nKillStreak 0\nk/D {KD}\nTime Played {TimePlayed}"
 
-    # L'appareil HUD Message qui sert de pont pour afficher votre Blueprint Widget
-    @editable
-    BlueprintWidgetDevice : hud_message_device = hud_message_device{}
+    OnBegin<override>()<suspends> : void =
+        GetPlayspace().PlayerAddedEvent().Subscribe(OnPlayerJoined)
+        GetPlayspace().PlayerRemovedEvent().Subscribe(OnPlayerLeft)
 
-    var PlayerWidgets : [player]?text_block = map{}
+    OnPlayerJoined(InAgent : agent) : void =
+        if:
+            Player := player[InAgent]
+            Player.IsActive[]
+            not PlayerStats[Player]
+        then:
+            if (set PlayerStats[Player] = player_stats_table{}):
+                Print("New player initialized")
+                # Met à jour le panneau avec les stats à 0 du nouveau joueur
+                MettreAJourPanneau(Player)
 
-    OnBegin<override>()<suspends>:void =
-        # Création du bloc de texte avec la chaîne de version (Interface Verse pure)
-        VersionTextBlock := text_block{
-            DefaultText := MakeMessage(VersionString)
-        }
+    OnPlayerLeft(InAgent : agent) : void =
+        if:
+            Player := player[InAgent]
+            Stats := PlayerStats[Player]
+        then:
+            KDA := GetKDA(Stats)
+            WR  := GetWinRate(Stats)
+            Print("Player left - Score:{Stats.Score} V:{Stats.Wins} D:{Stats.Deaths} KDA:{KDA} WR:{WR}%")
 
-        # Définition de la couleur et de la taille du texte
-        VersionTextBlock.SetTextColor(MakeColorFromHex("FFFFFF"))
-        VersionTextBlock.SetTextSize(FontSize)
+    # 3. FONCTION DE MISE A JOUR DU PANNEAU
+    MettreAJourPanneau(Player : player) : void =
+        if:
+            Stats := PlayerStats[Player]
+            # Conversion des floats en int pour un affichage propre sur le panneau
+            KillsInt := Int[Stats.Wins]
+            DeathsInt := Int[Stats.Deaths]
+            TimeInt := Int[Stats.TimePlayed]
+        then:
+            KD := GetKDA(Stats)
+            # Dans votre code, Wins correspond aux Kills (utilisé dans GetKDA)
+            PanneauStats.SetText(TexteClassement(KillsInt, DeathsInt, KD, TimeInt))
 
-        # Création du canvas slot avec un ZOrder élevé
-        VersionSlot := canvas_slot{
-            Widget := VersionTextBlock
-            Anchors := anchors{
-                Minimum := vector2{X := 0.0, Y := 0.0}
-                Maximum := vector2{X := 0.0, Y := 0.0}
-            }
-            Offsets := margin{
-                Left := 35.0,  
-                Top := 9.0 # Valeur modifiée pour descendre le texte et éviter la superposition
-            }
-            Alignment := vector2{X := 0.0, Y := 0.0}
-            ZOrder := 1000  
-        }
+    # --- Stat Mutation Methods ---
+    AddScore(Player : player, Points : int) : void =
+        if:
+            Player.IsActive[]
+            CurrentStats := PlayerStats[Player]
+        then:
+            NewScore := CurrentStats.Score + Points
+            NewStats := MakePlayerStatsTable(CurrentStats, ?InScore := NewScore)
+            if (set PlayerStats[Player] = NewStats):
+                Print("Score : {NewScore}")
+                MettreAJourPanneau(Player)
 
-        # Boucle pour ajouter les widgets à l'interface de chaque joueur
-        for (Player : GetPlayspace().GetPlayers()):
-            
-            # 1. Afficher le Blueprint Widget (UMG) via l'appareil
-            BlueprintWidgetDevice.Show(Player)
+    AddWin(Player : player) : void =
+        if:
+            Player.IsActive[]
+            CurrentStats := PlayerStats[Player]
+        then:
+            NewStats := MakePlayerStatsTable(CurrentStats, ?InWins := CurrentStats.Wins + 1.0)
+            if (set PlayerStats[Player] = NewStats):
+                MettreAJourPanneau(Player) # Actualise après un Kill (Win)
 
-            # 2. Afficher l'interface texte Verse par-dessus
-            if (PlayerUI := GetPlayerUI[Player]):
-                Canvas := canvas{}
-                Canvas.AddWidget(VersionSlot)
-                PlayerUI.AddWidget(Canvas)
-                if (set PlayerWidgets[Player] = option{VersionTextBlock}) {}
+    AddLoss(Player : player) : void =
+        if:
+            Player.IsActive[]
+            CurrentStats := PlayerStats[Player]
+        then:
+            NewStats := MakePlayerStatsTable(CurrentStats, ?InLosses := CurrentStats.Losses + 1.0)
+            if (set PlayerStats[Player] = NewStats):
+                MettreAJourPanneau(Player)
 
-    # Fonction d'assistance pour convertir une chaîne en message
-    MakeMessage<localizes>(InString : string) : message = "{InString}"
+    AddAssist(Player : player) : void =
+        if:
+            Player.IsActive[]
+            CurrentStats := PlayerStats[Player]
+        then:
+            NewStats := MakePlayerStatsTable(CurrentStats, ?InAssists := CurrentStats.Assists + 1.0)
+            if (set PlayerStats[Player] = NewStats):
+                MettreAJourPanneau(Player)
+
+    AddDeath(Player : player) : void =
+        if:
+            Player.IsActive[]
+            CurrentStats := PlayerStats[Player]
+        then:
+            NewStats := MakePlayerStatsTable(CurrentStats, ?InDeaths := CurrentStats.Deaths + 1.0)
+            if (set PlayerStats[Player] = NewStats):
+                MettreAJourPanneau(Player) # Actualise après une mort
+
+    AddTimePlayed(Player : player, Time : float) : void =
+        if:
+            Player.IsActive[]
+            CurrentStats := PlayerStats[Player]
+        then:
+            NewStats := MakePlayerStatsTable(CurrentStats, ?InTimePlayed := CurrentStats.TimePlayed + Time)
+            if (set PlayerStats[Player] = NewStats):
+                MettreAJourPanneau(Player)
+
+    ResetStats(Player : player) : void =
+        if (Player.IsActive[]):
+            if (set PlayerStats[Player] = player_stats_table{}):
+                Print("Stats reset")
+                MettreAJourPanneau(Player)
