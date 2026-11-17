@@ -1,0 +1,73 @@
+using { /Fortnite.com/Devices }
+using { /Verse.org/Simulation }
+using { /Verse.org/Verse }
+
+# Un appareil Verse personnalisé pour gérer un événement temporaire répétable
+event_manager_device := class(creative_device):
+
+    # Le bouton à condition qui lance l'événement
+    @editable
+    ConditionalButton : conditional_button_device = conditional_button_device{}
+
+    # Le TABLEAU de générateurs de gardes
+    @editable
+    GuardSpawners : []guard_spawner_device = array{}
+
+    # L'appareil de message HUD
+    @editable
+    HUDMessage : hud_message_device = hud_message_device{}
+
+    # L'appareil Objectif chronométré (Timed Objective)
+    @editable
+    TimedObjective : timed_objective_device = timed_objective_device{}
+
+    # Variable pour suivre si l'événement est déjà en cours
+    var IsEventActive : logic = false
+
+    # S'exécute au lancement du jeu
+    OnBegin<override>()<suspends> : void =
+        # Au démarrage, on s'assure que TOUS les spawners sont désactivés
+        for (Spawner : GuardSpawners):
+            Spawner.Disable()
+            
+        # On écoute l'activation du bouton à condition
+        ConditionalButton.ActivatedEvent.Subscribe(OnButtonActivated)
+        
+        # On écoute quand le chrono du Timed Objective se termine
+        TimedObjective.CompletedEvent.Subscribe(OnEventTimerExpired)
+
+    # Fonction appelée quand le joueur remplit les conditions et active le bouton
+    OnButtonActivated(Agent : agent) : void =
+        if (not IsEventActive?):
+            # On verrouille l'événement pour éviter le spam
+            set IsEventActive = true
+            Print("Événement COMMENCÉ !")
+
+            # --- DÉBUT DE L'ÉVÉNEMENT ---
+            HUDMessage.Show(Agent)
+
+            # On active et fait spawn chaque garde
+            for (Spawner : GuardSpawners):
+                Spawner.Enable()
+                Spawner.Spawn()
+            
+            # On lance le chrono
+            TimedObjective.Begin(Agent)
+
+    # Fonction automatique appelée dès que le Timed Objective arrive à 00:00
+    OnEventTimerExpired(Agent : agent) : void =
+        Print("Événement TERMINÉ ! Le chrono est écoulé.")
+        
+        # Masquer le message HUD au joueur
+        HUDMessage.Hide(Agent)
+
+        # On fait disparaître les gardes et on désactive les spawners
+        for (Spawner : GuardSpawners):
+            Spawner.Despawn()
+            Spawner.Disable()
+
+        # AJOUT : On réinitialise le bouton à condition pour qu'il soit réutilisable
+        ConditionalButton.Reset()
+
+        # On réactive la possibilité de relancer l'événement au prochain clic
+        set IsEventActive = false
