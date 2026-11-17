@@ -1,1 +1,153 @@
+using { /Verse.org/Simulation }
+using { /Fortnite.com/Devices }
+using { /UnrealEngine.com/Temporary/Diagnostics }
 
+# ==============================================================
+var PlayerStats : weak_map(player, player_stats_table) = map{}
+
+# ==============================================================
+player_stats_table := class<final><persistable>:
+    Score      : int   = 0
+    Wins       : float = 0.0
+    Losses     : float = 0.0
+    Assists    : float = 0.0
+    Deaths     : float = 0.0
+    TimePlayed : float = 0.0
+
+MakePlayerStatsTable<constructor>(
+    OldStats : player_stats_table,
+    ?InScore      : int   = OldStats.Score,
+    ?InWins       : float = OldStats.Wins,
+    ?InLosses     : float = OldStats.Losses,
+    ?InAssists    : float = OldStats.Assists,
+    ?InDeaths     : float = OldStats.Deaths,
+    ?InTimePlayed : float = OldStats.TimePlayed
+) := player_stats_table:
+    Score      := InScore
+    Wins       := InWins
+    Losses     := InLosses
+    Assists    := InAssists
+    Deaths     := InDeaths
+    TimePlayed := InTimePlayed
+
+# ==============================================================
+GetKDA(Stats : player_stats_table) : float =
+    Divisor := if (Stats.Deaths > 0.0) then Stats.Deaths else 1.0
+    (Stats.Wins + Stats.Assists) / Divisor
+
+GetWinRate(Stats : player_stats_table) : float =
+    Total := Stats.Wins + Stats.Losses
+    if (Total > 0.0):
+        (Stats.Wins / Total) * 100.0
+    else:
+        0.0
+
+# ==============================================================
+player_stats_manager := class(creative_device):
+
+    # 1. LIAISON DU PANNEAU D'AFFICHAGE
+    @editable
+    PanneauStats : billboard_device = billboard_device{}
+
+    # 2. DEFINITION DU TEXTE
+    TexteClassement<localizes>(Kills: int, Deaths: int, KD: float, TimePlayed: int) : message = "Classement\nCaillou_Matcol\n\nKills {Kills}\nDeaths {Deaths}\nKillStreak 0\nk/D {KD}\nTime Played {TimePlayed}"
+
+    OnBegin<override>()<suspends> : void =
+        GetPlayspace().PlayerAddedEvent().Subscribe(OnPlayerJoined)
+        GetPlayspace().PlayerRemovedEvent().Subscribe(OnPlayerLeft)
+
+    OnPlayerJoined(InAgent : agent) : void =
+        if:
+            Player := player[InAgent]
+            Player.IsActive[]
+            not PlayerStats[Player]
+        then:
+            if (set PlayerStats[Player] = player_stats_table{}):
+                Print("New player initialized")
+                # Met à jour le panneau avec les stats à 0 du nouveau joueur
+                MettreAJourPanneau(Player)
+
+    OnPlayerLeft(InAgent : agent) : void =
+        if:
+            Player := player[InAgent]
+            Stats := PlayerStats[Player]
+        then:
+            KDA := GetKDA(Stats)
+            WR  := GetWinRate(Stats)
+            Print("Player left - Score:{Stats.Score} V:{Stats.Wins} D:{Stats.Deaths} KDA:{KDA} WR:{WR}%")
+
+    # 3. FONCTION DE MISE A JOUR DU PANNEAU
+    MettreAJourPanneau(Player : player) : void =
+        if:
+            Stats := PlayerStats[Player]
+            # Conversion des floats en int pour un affichage propre sur le panneau
+            KillsInt := Int[Stats.Wins]
+            DeathsInt := Int[Stats.Deaths]
+            TimeInt := Int[Stats.TimePlayed]
+        then:
+            KD := GetKDA(Stats)
+            # Dans votre code, Wins correspond aux Kills (utilisé dans GetKDA)
+            PanneauStats.SetText(TexteClassement(KillsInt, DeathsInt, KD, TimeInt))
+
+    # --- Stat Mutation Methods ---
+    AddScore(Player : player, Points : int) : void =
+        if:
+            Player.IsActive[]
+            CurrentStats := PlayerStats[Player]
+        then:
+            NewScore := CurrentStats.Score + Points
+            NewStats := MakePlayerStatsTable(CurrentStats, ?InScore := NewScore)
+            if (set PlayerStats[Player] = NewStats):
+                Print("Score : {NewScore}")
+                MettreAJourPanneau(Player)
+
+    AddWin(Player : player) : void =
+        if:
+            Player.IsActive[]
+            CurrentStats := PlayerStats[Player]
+        then:
+            NewStats := MakePlayerStatsTable(CurrentStats, ?InWins := CurrentStats.Wins + 1.0)
+            if (set PlayerStats[Player] = NewStats):
+                MettreAJourPanneau(Player) # Actualise après un Kill (Win)
+
+    AddLoss(Player : player) : void =
+        if:
+            Player.IsActive[]
+            CurrentStats := PlayerStats[Player]
+        then:
+            NewStats := MakePlayerStatsTable(CurrentStats, ?InLosses := CurrentStats.Losses + 1.0)
+            if (set PlayerStats[Player] = NewStats):
+                MettreAJourPanneau(Player)
+
+    AddAssist(Player : player) : void =
+        if:
+            Player.IsActive[]
+            CurrentStats := PlayerStats[Player]
+        then:
+            NewStats := MakePlayerStatsTable(CurrentStats, ?InAssists := CurrentStats.Assists + 1.0)
+            if (set PlayerStats[Player] = NewStats):
+                MettreAJourPanneau(Player)
+
+    AddDeath(Player : player) : void =
+        if:
+            Player.IsActive[]
+            CurrentStats := PlayerStats[Player]
+        then:
+            NewStats := MakePlayerStatsTable(CurrentStats, ?InDeaths := CurrentStats.Deaths + 1.0)
+            if (set PlayerStats[Player] = NewStats):
+                MettreAJourPanneau(Player) # Actualise après une mort
+
+    AddTimePlayed(Player : player, Time : float) : void =
+        if:
+            Player.IsActive[]
+            CurrentStats := PlayerStats[Player]
+        then:
+            NewStats := MakePlayerStatsTable(CurrentStats, ?InTimePlayed := CurrentStats.TimePlayed + Time)
+            if (set PlayerStats[Player] = NewStats):
+                MettreAJourPanneau(Player)
+
+    ResetStats(Player : player) : void =
+        if (Player.IsActive[]):
+            if (set PlayerStats[Player] = player_stats_table{}):
+                Print("Stats reset")
+                MettreAJourPanneau(Player)
