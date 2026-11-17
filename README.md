@@ -1,4 +1,4 @@
-# Dangerous Ice Rink 🏒❄️
+# Dangerous Ice Rink ❄️
 
 Bienvenue sur le dépôt du projet **Dangerous Ice Rink** développé en Verse pour UEFN (Unreal Editor for Fortnite). Ce projet intègre divers systèmes de gestion et de dispositifs pour une expérience de jeu unique.
 
