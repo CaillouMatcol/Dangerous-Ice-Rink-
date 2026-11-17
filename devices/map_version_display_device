@@ -1,0 +1,60 @@
+using { /Fortnite.com/Devices }
+using { /Verse.org/Simulation }
+using { /UnrealEngine.com/Temporary/UI }
+using { /Verse.org/Colors }
+using { /Fortnite.com/UI }
+using { /UnrealEngine.com/Temporary/SpatialMath }
+
+map_version_display_device := class(creative_device):
+    @editable
+    VersionString : string = "V2.74"
+
+    @editable
+    FontSize : float = 17.0
+
+    # L'appareil HUD Message qui sert de pont pour afficher votre Blueprint Widget
+    @editable
+    BlueprintWidgetDevice : hud_message_device = hud_message_device{}
+
+    var PlayerWidgets : [player]?text_block = map{}
+
+    OnBegin<override>()<suspends>:void =
+        # Création du bloc de texte avec la chaîne de version (Interface Verse pure)
+        VersionTextBlock := text_block{
+            DefaultText := MakeMessage(VersionString)
+        }
+
+        # Définition de la couleur et de la taille du texte
+        VersionTextBlock.SetTextColor(MakeColorFromHex("FFFFFF"))
+        VersionTextBlock.SetTextSize(FontSize)
+
+        # Création du canvas slot avec un ZOrder élevé
+        VersionSlot := canvas_slot{
+            Widget := VersionTextBlock
+            Anchors := anchors{
+                Minimum := vector2{X := 0.0, Y := 0.0}
+                Maximum := vector2{X := 0.0, Y := 0.0}
+            }
+            Offsets := margin{
+                Left := 35.0,  
+                Top := 9.0 # Valeur modifiée pour descendre le texte et éviter la superposition
+            }
+            Alignment := vector2{X := 0.0, Y := 0.0}
+            ZOrder := 1000  
+        }
+
+        # Boucle pour ajouter les widgets à l'interface de chaque joueur
+        for (Player : GetPlayspace().GetPlayers()):
+            
+            # 1. Afficher le Blueprint Widget (UMG) via l'appareil
+            BlueprintWidgetDevice.Show(Player)
+
+            # 2. Afficher l'interface texte Verse par-dessus
+            if (PlayerUI := GetPlayerUI[Player]):
+                Canvas := canvas{}
+                Canvas.AddWidget(VersionSlot)
+                PlayerUI.AddWidget(Canvas)
+                if (set PlayerWidgets[Player] = option{VersionTextBlock}) {}
+
+    # Fonction d'assistance pour convertir une chaîne en message
+    MakeMessage<localizes>(InString : string) : message = "{InString}"
