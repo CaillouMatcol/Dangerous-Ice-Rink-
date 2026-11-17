@@ -1,0 +1,153 @@
+using { /Fortnite.com/Characters }
+using { /Fortnite.com/Devices }
+using { /Fortnite.com/Game }
+using { /Verse.org/Simulation }
+using { /Verse.org/Simulation/Tags }
+using { /UnrealEngine.com/Temporary/Diagnostics }
+
+# Persistent player stats storage
+player_stats := class<final><persistable>:
+    Kills : int = 0
+    Deaths : int = 0
+    Killstreak : int = 0
+    KDTracker : int = 0
+    TimePlayed : int = 0
+
+spawner := class(tag){}
+
+# A Verse-authored creative device that can be placed in a level
+game_manager := class(creative_device):
+
+    @editable
+    KillTracker : tracker_device = tracker_device{}
+
+    @editable
+    DeathTracker : tracker_device = tracker_device{}
+
+    @editable
+    KillstreakTracker : tracker_device = tracker_device{}
+
+    @editable
+    KDTracker : tracker_device = tracker_device{}
+
+    @editable
+    TimePlayedTracker : tracker_device = tracker_device{}
+
+    @editable
+    KillstreakHud : hud_message_device = hud_message_device{}
+
+    @editable
+    DisplayStatsButton1 : button_device = button_device{}
+
+    @editable
+    BillboardStats1 : billboard_device = billboard_device{}
+
+    @editable
+    DisplayStatsButton2 : button_device = button_device{}
+
+    @editable
+    BillboardStats2 : billboard_device = billboard_device{}
+
+    var AgentList : []agent = array{}
+    var AgentMap : [agent]cancelable = map{}
+
+    # Runs when the device is started in a running game
+    OnBegin<override>()<suspends>:void=
+        GetPlayspace().PlayerRemovedEvent().Subscribe(OnPlayerLeftServer)
+        for(Player: GetPlayspace().GetPlayers()):
+            spawn{InitPlayer(Player)}
+        DisplayStatsButton1.InteractedWithEvent.Subscribe(UpdateBillboard1)
+        DisplayStatsButton2.InteractedWithEvent.Subscribe(UpdateBillboard2)
+
+    InitSpawners():void=
+        # Updated to use non-deprecated GetCreativeObjectsWithTag
+        SpawnerTag := spawner{}
+        Spawners := GetCreativeObjectsWithTag(SpawnerTag)
+        for (Obj : Spawners):
+            if (Spawner := player_spawner_device[Obj]):
+                Spawner.SpawnedEvent.Subscribe(OnPlayerSpawned)
+
+    OnPlayerSpawned(Agent : agent):void=
+        spawn{InitPlayer(Agent)}
+
+    InitPlayer(Agent : agent)<suspends>:void=
+        if (not AgentMap[Agent]):
+            if:
+                FortChar := Agent.GetFortCharacter[]
+            then:
+                ElimEventCancelable := FortChar.EliminatedEvent().Subscribe(PlayerEliminated)
+                if (set AgentMap[Agent] = ElimEventCancelable):
+                    Print("New player")
+
+    OnPlayerLeftServer(PlayerLeaving : player):void=
+        if (DeathCancelable := AgentMap[PlayerLeaving]):
+            var NewAgentMap : [agent]cancelable = map{}
+
+            for (Player -> Value : AgentMap, Player <> PlayerLeaving):
+                Print("Player left")
+                set NewAgentMap = ConcatenateMaps(NewAgentMap, map{Player => Value})
+                # When player A leaves, teleport player B to lobby (rematch level), end round. 
+            set AgentMap = NewAgentMap
+            DeathCancelable.Cancel()
+            # TODO: Clear cancelables for PlayerLeaving
+
+    PlayerEliminated(EliminationResult : elimination_result):void=
+        if:
+            EliminatingFortChar := EliminationResult.EliminatingCharacter?
+            EliminatedFortChar := EliminationResult.EliminatedCharacter
+            EliminatingFortChar <> EliminatedFortChar
+            EliminatingAgent := EliminatingFortChar.GetAgent[]
+            EliminatedAgent := EliminatedFortChar.GetAgent[]
+        then:
+            KillTracker.Increment(EliminatingAgent)
+            KillstreakTracker.Increment(EliminatingAgent)
+            DeathTracker.Increment(EliminatedAgent)
+            KillstreakTracker.Reset(EliminatedAgent)
+            # TODO: Update UI for both players
+            spawn{UpdateKillstreakHud(EliminatingAgent, EliminatedAgent)}
+
+    UpdateKillstreakHud(EliminatingAgent : agent, EliminatedAgent : agent)<suspends>:void=
+        Sleep(0.1)
+        EliminatingPlayerKillstreak := KillstreakTracker.GetValue(EliminatingAgent)
+        EliminatedPlayerKillstreak := KillstreakTracker.GetValue(EliminatedAgent)
+        KillstreakHud.SetText(StringToMessage("{EliminatingPlayerKillstreak}"))
+        KillstreakHud.Show(EliminatingAgent)
+        Sleep(0.1)
+        KillstreakHud.SetText(StringToMessage("{EliminatedPlayerKillstreak}"))
+        KillstreakHud.Show(EliminatedAgent)
+
+    StringToMessage<localizes>(String : string) : message = "{String}"
+
+    PlayerBillboardText<localizes>(Kills : int, Deaths : int, Killstreak : int, KD : float, TimePlayed : int) : message=
+        "Kills : {Kills}\nDeaths : {Deaths}\nKillstreak : {Killstreak}\nK/D : {KD}\nTime Played : {TimePlayed}"
+
+    UpdateBillboard1(Agent : agent):void=
+        Print("Update billboard 1")
+        UpdateBillboard(BillboardStats1, Agent)
+
+    UpdateBillboard2(Agent : agent):void=
+        UpdateBillboard(BillboardStats2, Agent)
+
+    UpdateBillboard(Billboard : billboard_device, Agent : agent):void=
+        # TODO: Update score
+        Print("Computing stats")
+        var KD : float = 0.0
+        Score := 0
+        Kills := KillTracker.GetValue(Agent)
+        Deaths := DeathTracker.GetValue(Agent)
+        Killstreak := KillstreakTracker.GetValue(Agent)
+        TimePlayed := TimePlayedTracker.GetValue(Agent)
+        var TotalDeaths : int = Deaths
+        if (TotalDeaths = 0):
+            set TotalDeaths = 1
+        RawKD := (1.0 * Kills) / (1.0 * TotalDeaths)
+        if (TestKD := RoundToDecimalPlaces[RawKD, 2]):
+            set KD = TestKD
+        Billboard.SetText(PlayerBillboardText(Kills, Deaths, Killstreak, KD, TimePlayed))
+
+        
+    RoundToDecimalPlaces(Value:float, DecimalPlaces:int)<decides><transacts>:float =
+        DecimalPlaces >= 0
+        Multiplier := Pow(10.0, DecimalPlaces * 1.0)
+        RoundedValues := Round[Value * Multiplier] * 1.0
+        return RoundedValues / Multiplier
